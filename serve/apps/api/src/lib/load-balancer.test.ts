@@ -69,3 +69,20 @@ test('login capacity enforces the three-task limit per server and queues overflo
   const next = await scheduler.reserveSlot('server-1')
   assert.equal(next, true)
 })
+
+test('falls back to in-memory scheduler state when Redis is unavailable', async () => {
+  const failingRedis = {
+    async get() { throw new Error('ECONNREFUSED') },
+    async set() { throw new Error('ECONNREFUSED') },
+    async incr() { throw new Error('ECONNREFUSED') },
+    async decr() { throw new Error('ECONNREFUSED') },
+    async rpush() { throw new Error('ECONNREFUSED') },
+  } as any
+
+  const scheduler = new LoginScheduler({ redis: failingRedis, serverCount: 2, maxConcurrentPerServer: 1 })
+
+  assert.equal(await scheduler.selectServerForLogin(), 'server-1')
+  assert.equal(await scheduler.reserveSlot('server-1'), true)
+  assert.equal(await scheduler.reserveSlot('server-1'), false)
+  assert.equal(await scheduler.releaseSlot('server-1'), true)
+})

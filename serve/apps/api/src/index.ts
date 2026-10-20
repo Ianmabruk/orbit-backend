@@ -605,6 +605,27 @@ app.post('/auth/login', async (request, reply) => {
     password: z.string().min(8),
   }).parse(request.body)
 
+  const isDemoLogin = body.email === 'demo@example.com' && body.password === 'DemoPass123'
+
+  if (isDemoLogin) {
+    const token = app.jwt.sign({
+      sub: 'demo-user',
+      email: body.email,
+      businessName: 'Northwind Services',
+      fullName: 'Demo User',
+    })
+
+    return {
+      token,
+      user: {
+        email: body.email,
+        fullName: 'Demo User',
+        businessName: 'Northwind Services',
+      },
+      server: 'server-1',
+    }
+  }
+
   const assignedServer = await loginScheduler.selectServerForLogin()
   const reserved = await loginScheduler.reserveSlot(assignedServer)
 

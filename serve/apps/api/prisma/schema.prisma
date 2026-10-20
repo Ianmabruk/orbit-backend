@@ -1,0 +1,91 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Tenant {
+  id                    String                @id @default(cuid())
+  name                  String
+  slug                  String                @unique
+  plan                  String                @default("starter")
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  users                 User[]
+  contacts              Contact[]
+  campaigns             Campaign[]
+  messageLogs           MessageLog[]
+  wordpressConnections  WordPressConnection[]
+}
+
+model User {
+  id            String   @id @default(cuid())
+  fullName      String
+  email         String   @unique
+  passwordHash  String
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Contact {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  name          String
+  email         String?
+  phone         String?
+  status        String   @default("active")
+  consent       String   @default("unknown")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Campaign {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  name          String
+  channel       String
+  template      String
+  status        String   @default("draft")
+  scheduledFor  DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model MessageLog {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  channel       String
+  recipient     String
+  status        String
+  sentAt        DateTime @default(now())
+}
+
+model WordPressConnection {
+  id                  String    @id @default(cuid())
+  tenantId            String    @unique
+  tenant              Tenant    @relation(fields: [tenantId], references: [id])
+  name                String?
+  siteUrl             String
+  platform            String?   @default("wordpress")
+  integrationMethod   String?   @default("plugin")
+  description        String?
+  status              String    @default("connected")
+  authorized          Boolean   @default(false)
+  credentialHash      String?
+  credentialPreview   String?
+  webhookSecret       String?
+  lastTestedAt        DateTime?
+  lastSyncedAt        DateTime?
+  contactSyncEnabled  Boolean   @default(false)
+  lastSyncSummary     String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+}
