@@ -421,16 +421,6 @@ app.post('/integrations/wordpress/sync', { preValidation: [app.authenticate] }, 
   })
 })
 
-app.get('/providers/status', async () => ({
-  status: getProviderStatus(process.env),
-  timestamp: new Date().toISOString(),
-}))
-
-app.get('/providers/brevo/health', async () => {
-  const health = await checkBrevoHealth(process.env)
-  return health
-})
-
 app.post('/providers/test-email', { preValidation: [app.authenticate] }, async (request, reply) => {
   const body = z.object({
     email: z.string().email().optional(),
@@ -937,7 +927,11 @@ app.post('/integrations/wordpress/sync', { preValidation: [app.authenticate] }, 
   })
 })
 
-const isMainModule = process.argv[1] && process.argv[1].endsWith('src/index.ts')
+const isMainModule = process.argv[1] && (
+  process.argv[1].endsWith('src/index.ts') ||
+  process.argv[1].endsWith('dist/index.js') ||
+  process.argv[1].endsWith('/index.js')
+)
 
 if (isMainModule) {
   try {
