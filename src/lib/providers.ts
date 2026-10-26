@@ -6,6 +6,9 @@ export type ProviderConfig = {
   senderName: string
   smsProvider: string
   smsApiKey: string
+  sendAfricaApiKey: string
+  smsAccountSid: string
+  smsAuthToken: string
   smsSenderId: string
   emailConfigured: boolean
   smsConfigured: boolean
@@ -40,10 +43,16 @@ export function getProviderConfig(input: NodeJS.ProcessEnv = process.env): Provi
   const brevoApiKey = (input.BREVO_API_KEY ?? '').trim()
   const gmassApiKey = (input.GMASS_API_KEY ?? '').trim()
   const senderEmail = normalizeEmail((emailProvider === 'gmass' ? (input.GMASS_SENDER_EMAIL ?? input.BREVO_SENDER_EMAIL ?? '') : (input.BREVO_SENDER_EMAIL ?? '')))
-  const senderName = (input.BREVO_SENDER_NAME ?? '').trim()
+  const senderName = (input.GMASS_SENDER_NAME ?? input.BREVO_SENDER_NAME ?? '').trim()
   const smsProvider = (input.SMS_PROVIDER ?? DEFAULT_SMS_PROVIDER).trim().toLowerCase()
   const smsApiKey = (input.SMS_API_KEY ?? '').trim()
+  const sendAfricaApiKey = (input.SENDAFRICA_API_KEY ?? '').trim()
+  const smsAccountSid = ((input.SMS_ACCOUNT_SID ?? input.TWILIO_ACCOUNT_SID ?? '').trim())
+  const smsAuthToken = ((input.SMS_AUTH_TOKEN ?? input.TWILIO_AUTH_TOKEN ?? '').trim())
   const smsSenderId = (input.SMS_SENDER_ID ?? '').trim()
+
+  const twilioAccountSid = smsAccountSid || (smsApiKey.includes(':') ? smsApiKey.split(':', 1)[0] : '')
+  const twilioAuthToken = smsAuthToken || (smsApiKey.includes(':') ? smsApiKey.slice(smsApiKey.indexOf(':') + 1) : smsApiKey)
 
   return {
     emailProvider,
@@ -53,14 +62,27 @@ export function getProviderConfig(input: NodeJS.ProcessEnv = process.env): Provi
     senderName,
     smsProvider,
     smsApiKey,
+    sendAfricaApiKey,
+    smsAccountSid: twilioAccountSid,
+    smsAuthToken: twilioAuthToken,
     smsSenderId,
     emailConfigured: Boolean((emailProvider === 'gmass' ? gmassApiKey : brevoApiKey) && senderEmail),
-    smsConfigured: Boolean(smsProvider && smsProvider !== DEFAULT_SMS_PROVIDER && smsApiKey),
+    smsConfigured: Boolean(
+      smsProvider &&
+      smsProvider !== DEFAULT_SMS_PROVIDER &&
+      smsSenderId &&
+      (
+        (smsProvider === 'twilio' && twilioAccountSid && twilioAuthToken) ||
+        (smsProvider === 'sendafrica' && sendAfricaApiKey) ||
+        smsApiKey
+      ),
+    ),
   }
 }
 
 export function getProviderStatus(input: NodeJS.ProcessEnv = process.env): ProviderStatusSummary {
   const config = getProviderConfig(input)
+  const providerLabel = config.emailProvider === 'gmass' ? 'GMass' : 'Brevo'
 
   const email = config.emailConfigured
     ? {
@@ -70,9 +92,9 @@ export function getProviderStatus(input: NodeJS.ProcessEnv = process.env): Provi
       }
     : {
         status: 'not_configured' as const,
-        provider: null,
+        provider: config.emailProvider,
         sender: null,
-        message: 'Your email provider requires a configured API key and authorized sender address.',
+        message: `${providerLabel} email is not configured. Add a valid API key and sender email before sending campaigns.`,
       }
 
   const normalizedSmsProvider = config.smsProvider && config.smsProvider !== DEFAULT_SMS_PROVIDER ? config.smsProvider : null
@@ -252,6 +274,151 @@ export type SmsDispatchResult = {
   reason?: string
 }
 
+async function sendTwilioSms(payload: { to: string; text: string; from: string }, input: NodeJS.ProcessEnv = process.env) {
+  const config = getProviderConfig(input)
+
+  if (config.smsProvider !== 'twilio') {
+    throw new Error('Twilio SMS is not the configured provider.')
+  }
+
+  if (!config.smsAccountSid || !config.smsAuthToken) {
+    throw new Error('Twilio account SID and auth token are required for SMS sends.')
+  }
+
+  const auth = Buffer.from(`${config.smsAccountSid}:${config.smsAuthToken}`).toString('base64')
+
+  const form = new URLSearchParams({
+    To: payload.to,
+    From: payload.from,
+    Body: payload.text,
+  })
+
+  const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${config.smsAccountSid}/Messages.json`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${auth}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+    },
+    body: form.toString(),
+    signal: AbortSignal.timeout(15_000),
+  })
+
+  const body = (await response.json().catch(() => ({}))) as { sid?: string; message?: string; code?: number; more_info?: string }
+
+  if (!response.ok) {
+    throw new Error(body.message ?? 'Twilio rejected the outbound SMS request.')
+  }
+
+  return {
+    ok: true,
+    provider: 'twilio',
+    status: 'sent' as const,
+    messageId: body.sid ?? null,
+  }
+}
+
+async function sendBrevoSms(payload: { to: string; text: string; from: string }, input: NodeJS.ProcessEnv = process.env) {
+  const config = getProviderConfig(input)
+
+  if (config.smsProvider !== 'brevo') {
+    throw new Error('Brevo SMS is not the configured provider.')
+  }
+
+  const apiKey = config.brevoApiKey
+  if (!apiKey) {
+    throw new Error('Brevo API key is required for SMS sends.')
+  }
+
+  const sender = payload.from || config.smsSenderId || config.senderName || 'Serve'
+
+  const response = await fetch('https://api.brevo.com/v3/transactionalSMS/sms', {
+    method: 'POST',
+    headers: {
+      'api-key': apiKey,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({
+      sender,
+      recipient: payload.to,
+      content: payload.text,
+      type: 'transactional',
+    }),
+    signal: AbortSignal.timeout(15_000),
+  })
+
+  const body = (await response.json().catch(() => ({}))) as {
+    id?: string
+    messageId?: string
+    status?: string
+    message?: string
+    error?: string
+  }
+
+  if (!response.ok) {
+    throw new Error(body.message ?? body.error ?? 'Brevo rejected the outbound SMS request.')
+  }
+
+  return {
+    ok: true,
+    provider: 'brevo',
+    status: 'sent' as const,
+    messageId: body.id ?? body.messageId ?? null,
+  }
+}
+
+async function sendSendAfricaSms(payload: { to: string; text: string; from: string }, input: NodeJS.ProcessEnv = process.env) {
+  const config = getProviderConfig(input)
+
+  if (config.smsProvider !== 'sendafrica') {
+    throw new Error('SendAfrica SMS is not the configured provider.')
+  }
+
+  const apiKey = config.sendAfricaApiKey || config.smsApiKey
+  if (!apiKey) {
+    throw new Error('SendAfrica API key is required for SMS sends.')
+  }
+
+  const sender = payload.from || config.smsSenderId || config.senderName || 'Serve'
+
+  const response = await fetch('https://api.sendafrica.com/v1/sms/send', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({
+      to: payload.to,
+      sender,
+      message: payload.text,
+      from: sender,
+    }),
+    signal: AbortSignal.timeout(15_000),
+  })
+
+  const body = (await response.json().catch(() => ({}))) as {
+    id?: string
+    messageId?: string
+    status?: string
+    message?: string
+    error?: string
+    data?: { id?: string; messageId?: string }
+  }
+
+  if (!response.ok) {
+    throw new Error(body.message ?? body.error ?? 'SendAfrica rejected the outbound SMS request.')
+  }
+
+  return {
+    ok: true,
+    provider: 'sendafrica',
+    status: 'sent' as const,
+    messageId: body.id ?? body.messageId ?? body.data?.id ?? body.data?.messageId ?? null,
+  }
+}
+
 export async function dispatchCampaignMessage(
   payload: {
     channel: 'sms' | 'email'
@@ -266,12 +433,13 @@ export async function dispatchCampaignMessage(
 
   if (payload.channel === 'email') {
     if (!config.emailConfigured) {
+      const providerLabel = config.emailProvider === 'gmass' ? 'GMass' : 'Brevo'
       return {
         ok: false,
         channel: 'email',
-        provider: null,
+        provider: config.emailProvider,
         status: 'not_configured',
-        reason: 'Brevo is not configured. Add the API key and sender address before sending email.',
+        reason: `${providerLabel} is not configured. Add the API key and sender address before sending email.`,
       }
     }
 
@@ -286,7 +454,7 @@ export async function dispatchCampaignMessage(
     return {
       ok: true,
       channel: 'email',
-      provider: 'brevo',
+      provider: config.emailProvider,
       status: 'sent',
       messageId: result.messageId ?? null,
     }
@@ -309,6 +477,84 @@ export async function dispatchCampaignMessage(
       provider: config.smsProvider,
       status: 'failed',
       reason: 'The destination phone number is invalid for SMS sends.',
+    }
+  }
+
+  if (config.smsProvider === 'twilio') {
+    try {
+      const result = await sendTwilioSms({
+        to: payload.to,
+        text: payload.text,
+        from: config.smsSenderId,
+      }, input)
+
+      return {
+        ok: true,
+        channel: 'sms',
+        provider: 'twilio',
+        status: result.status,
+        messageId: result.messageId ?? null,
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        channel: 'sms',
+        provider: 'twilio',
+        status: 'failed',
+        reason: error instanceof Error ? error.message : 'Twilio SMS delivery failed.',
+      }
+    }
+  }
+
+  if (config.smsProvider === 'brevo') {
+    try {
+      const result = await sendBrevoSms({
+        to: payload.to,
+        text: payload.text,
+        from: config.smsSenderId || config.senderName || 'Serve',
+      }, input)
+
+      return {
+        ok: true,
+        channel: 'sms',
+        provider: 'brevo',
+        status: result.status,
+        messageId: result.messageId ?? null,
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        channel: 'sms',
+        provider: 'brevo',
+        status: 'failed',
+        reason: error instanceof Error ? error.message : 'Brevo SMS delivery failed.',
+      }
+    }
+  }
+
+  if (config.smsProvider === 'sendafrica') {
+    try {
+      const result = await sendSendAfricaSms({
+        to: payload.to,
+        text: payload.text,
+        from: config.smsSenderId || config.senderName || 'Serve',
+      }, input)
+
+      return {
+        ok: true,
+        channel: 'sms',
+        provider: 'sendafrica',
+        status: result.status,
+        messageId: result.messageId ?? null,
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        channel: 'sms',
+        provider: 'sendafrica',
+        status: 'failed',
+        reason: error instanceof Error ? error.message : 'SendAfrica SMS delivery failed.',
+      }
     }
   }
 
@@ -343,6 +589,78 @@ export class SmsService {
         provider: config.smsProvider,
         status: 'failed',
         reason: 'The destination phone number is invalid for SMS sends.',
+      }
+    }
+
+    if (config.smsProvider === 'twilio') {
+      try {
+        const result = await sendTwilioSms({
+          to: payload.to,
+          text: payload.message,
+          from: config.smsSenderId,
+        }, input)
+
+        return {
+          ok: true,
+          provider: 'twilio',
+          status: result.status,
+          messageId: result.messageId ?? null,
+        }
+      } catch (error) {
+        return {
+          ok: false,
+          provider: 'twilio',
+          status: 'failed',
+          reason: error instanceof Error ? error.message : 'Twilio SMS delivery failed.',
+        }
+      }
+    }
+
+    if (config.smsProvider === 'brevo') {
+      try {
+        const result = await sendBrevoSms({
+          to: payload.to,
+          text: payload.message,
+          from: config.smsSenderId || config.senderName || 'Serve',
+        }, input)
+
+        return {
+          ok: true,
+          provider: 'brevo',
+          status: result.status,
+          messageId: result.messageId ?? null,
+        }
+      } catch (error) {
+        return {
+          ok: false,
+          provider: 'brevo',
+          status: 'failed',
+          reason: error instanceof Error ? error.message : 'Brevo SMS delivery failed.',
+        }
+      }
+    }
+
+    if (config.smsProvider === 'sendafrica') {
+      try {
+        const result = await sendSendAfricaSms({
+          to: payload.to,
+          text: payload.message,
+          from: config.smsSenderId || config.senderName || 'Serve',
+        }, input)
+
+        return {
+          ok: true,
+          provider: 'sendafrica',
+          status: result.status,
+          messageId: result.messageId ?? null,
+        }
+      } catch (error) {
+        return {
+          ok: false,
+          provider: 'sendafrica',
+          status: 'failed',
+          reason: error instanceof Error ? error.message : 'SendAfrica SMS delivery failed.',
+        }
       }
     }
 

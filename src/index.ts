@@ -25,9 +25,14 @@ const envSchema = z.object({
   HOST: z.string().default('0.0.0.0'),
   JWT_SECRET: z.string().default('serve-dev-secret'),
   DATABASE_URL: z.string().optional(),
+  EMAIL_PROVIDER: z.string().optional(),
   BREVO_API_KEY: z.string().optional(),
   BREVO_SENDER_EMAIL: z.string().optional(),
   BREVO_SENDER_NAME: z.string().optional(),
+  GMASS_API_KEY: z.string().optional(),
+  GMASS_API_URL: z.string().optional(),
+  GMASS_SENDER_EMAIL: z.string().optional(),
+  GMASS_SENDER_NAME: z.string().optional(),
   SMS_PROVIDER: z.string().optional(),
   SMS_API_KEY: z.string().optional(),
   SMS_SENDER_ID: z.string().optional(),
@@ -826,12 +831,13 @@ app.post('/campaigns', { preValidation: [app.authenticate] }, async (request, re
   })
 
   if (!channelConfigured) {
+    const emailProviderLabel = providerStatus.email.provider === 'gmass' ? 'GMass' : 'Brevo'
     return reply.code(400).send({
       ok: false,
       campaign,
       message: body.channel === 'sms'
         ? 'SMS is not configured for this tenant. Configure an approved SMS provider before sending campaigns.'
-        : 'Brevo email is not configured for this tenant. Add a validated API key and sender before sending campaigns.',
+        : `${emailProviderLabel} email is not configured for this tenant. Add a validated API key and sender before sending campaigns.`,
     })
   }
 
