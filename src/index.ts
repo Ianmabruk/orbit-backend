@@ -534,48 +534,9 @@ app.post('/auth/register', async (request, reply) => {
     })
   } catch (error) {
     app.log.error(error)
-    try {
-      const tenant = await createTenantWithUniqueSlug(body.businessName)
-      const user = await prisma.user.create({
-        data: {
-          fullName: body.fullName,
-          email: normalizedEmail,
-          passwordHash: hashPassword(body.password),
-          tenantId: tenant.id,
-        },
-      })
-      const token = app.jwt.sign({
-        sub: user.id,
-        email: user.email,
-        businessName: tenant.name,
-        fullName: user.fullName,
-      })
-      return reply.code(201).send({
-        token,
-        user: {
-          email: user.email,
-          fullName: user.fullName,
-          businessName: tenant.name,
-        },
-      })
-    } catch (fallbackErr) {
-      app.log.error(fallbackErr)
-      const token = app.jwt.sign({
-        sub: 'demo-user',
-        email: normalizedEmail,
-        businessName: body.businessName,
-        fullName: body.fullName,
-      })
-      return reply.code(201).send({
-        token,
-        user: {
-          email: normalizedEmail,
-          fullName: body.fullName,
-          businessName: body.businessName,
-        },
-        demoMode: true,
-      })
-    }
+    return reply.code(500).send({
+      message: 'Unable to create user account. Please try again.',
+    })
   }
 })
 
