@@ -29,6 +29,21 @@ test('returns a truthful status when email is configured and SMS is not', () => 
   assert.equal(getProviderConfig(config).emailConfigured, true)
 })
 
+test('treats invalid Brevo sender emails as unconfigured', () => {
+  const status = getProviderStatus({
+    BREVO_API_KEY: 'test-key',
+    BREVO_SENDER_EMAIL: 'mabrixel tech',
+    BREVO_SENDER_NAME: 'Serve Platform',
+    SMS_PROVIDER: '',
+    SMS_API_KEY: '',
+    SMS_SENDER_ID: '',
+  })
+
+  assert.equal(status.email.status, 'not_configured')
+  assert.equal(status.email.provider, null)
+  assert.equal(getProviderConfig({ BREVO_API_KEY: 'test-key', BREVO_SENDER_EMAIL: 'mabrixel tech' }).emailConfigured, false)
+})
+
 test('dispatches through the configured channel and rejects unconfigured ones', async () => {
   const unconfiguredEmail = await dispatchCampaignMessage({
     channel: 'email',
