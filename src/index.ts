@@ -33,6 +33,9 @@ const envSchema = z.object({
   GMASS_API_URL: z.string().optional(),
   GMASS_SENDER_EMAIL: z.string().optional(),
   GMASS_SENDER_NAME: z.string().optional(),
+  MAILTRAP_API_KEY: z.string().optional(),
+  MAILTRAP_SENDER_EMAIL: z.string().optional(),
+  MAILTRAP_SENDER_NAME: z.string().optional(),
   SMS_PROVIDER: z.string().optional(),
   SMS_API_KEY: z.string().optional(),
   SMS_SENDER_ID: z.string().optional(),
@@ -831,13 +834,24 @@ app.post('/campaigns', { preValidation: [app.authenticate] }, async (request, re
   })
 
   if (!channelConfigured) {
+<<<<<<< HEAD
     const emailProviderLabel = providerStatus.email.provider === 'gmass' ? 'GMass' : 'Brevo'
+=======
+    const configuredLabel = ((process.env.EMAIL_PROVIDER ?? 'mailtrap') as string).trim().toLowerCase() === 'gmass'
+      ? 'GMass'
+      : 'Mailtrap'
+
+>>>>>>> 8b79178 (Fix Mailtrap provider detection and campaign validation)
     return reply.code(400).send({
       ok: false,
       campaign,
       message: body.channel === 'sms'
         ? 'SMS is not configured for this tenant. Configure an approved SMS provider before sending campaigns.'
+<<<<<<< HEAD
         : `${emailProviderLabel} email is not configured for this tenant. Add a validated API key and sender before sending campaigns.`,
+=======
+        : `${configuredLabel} email is not configured for this tenant. Add a validated API key and sender before sending campaigns.`,
+>>>>>>> 8b79178 (Fix Mailtrap provider detection and campaign validation)
     })
   }
 

@@ -44,6 +44,26 @@ test('treats invalid Brevo sender emails as unconfigured', () => {
   assert.equal(getProviderConfig({ BREVO_API_KEY: 'test-key', BREVO_SENDER_EMAIL: 'mabrixel tech' }).emailConfigured, false)
 })
 
+test('accepts Mailtrap configuration when EMAIL_PROVIDER is mailtrap', () => {
+  const status = getProviderStatus({
+    EMAIL_PROVIDER: 'mailtrap',
+    MAILTRAP_API_KEY: 'test-key',
+    MAILTRAP_SENDER_EMAIL: 'hello@example.com',
+    MAILTRAP_SENDER_NAME: 'Serve Platform',
+    SMS_PROVIDER: '',
+    SMS_API_KEY: '',
+    SMS_SENDER_ID: '',
+  })
+
+  assert.equal(status.email.status, 'configured')
+  assert.equal(status.email.provider, 'mailtrap')
+  assert.equal(getProviderConfig({
+    EMAIL_PROVIDER: 'mailtrap',
+    MAILTRAP_API_KEY: 'test-key',
+    MAILTRAP_SENDER_EMAIL: 'hello@example.com',
+  }).emailConfigured, true)
+})
+
 test('dispatches through the configured channel and rejects unconfigured ones', async () => {
   const unconfiguredEmail = await dispatchCampaignMessage({
     channel: 'email',

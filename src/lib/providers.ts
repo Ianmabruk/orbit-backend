@@ -1,5 +1,6 @@
 export type ProviderConfig = {
-  emailProvider: 'brevo' | 'gmass'
+  emailProvider: 'mailtrap' | 'gmass' | 'brevo'
+  mailtrapApiKey: string
   brevoApiKey: string
   gmassApiKey: string
   senderEmail: string
@@ -17,7 +18,7 @@ export type ProviderConfig = {
 export type ProviderStatusSummary = {
   email: {
     status: 'configured' | 'not_configured' | 'unauthorized'
-    provider: 'brevo' | 'gmass' | null
+    provider: 'mailtrap' | 'gmass' | 'brevo' | null
     sender: string | null
     message?: string
   }
@@ -39,11 +40,21 @@ function normalizeEmail(value: string): string {
 }
 
 export function getProviderConfig(input: NodeJS.ProcessEnv = process.env): ProviderConfig {
-  const emailProvider = ((input.EMAIL_PROVIDER ?? 'brevo') as string).trim().toLowerCase() === 'gmass' ? 'gmass' : 'brevo'
+  const requestedProvider = ((input.EMAIL_PROVIDER ?? (input.MAILTRAP_API_KEY ? 'mailtrap' : input.GMASS_API_KEY ? 'gmass' : 'brevo')) as string).trim().toLowerCase()
+  const emailProvider = requestedProvider === 'gmass' ? 'gmass' : requestedProvider === 'mailtrap' ? 'mailtrap' : 'brevo'
+  const mailtrapApiKey = (input.MAILTRAP_API_KEY ?? '').trim()
   const brevoApiKey = (input.BREVO_API_KEY ?? '').trim()
   const gmassApiKey = (input.GMASS_API_KEY ?? '').trim()
-  const senderEmail = normalizeEmail((emailProvider === 'gmass' ? (input.GMASS_SENDER_EMAIL ?? input.BREVO_SENDER_EMAIL ?? '') : (input.BREVO_SENDER_EMAIL ?? '')))
-  const senderName = (input.GMASS_SENDER_NAME ?? input.BREVO_SENDER_NAME ?? '').trim()
+  const senderEmail = normalizeEmail((emailProvider === 'gmass'
+    ? (input.GMASS_SENDER_EMAIL ?? input.BREVO_SENDER_EMAIL ?? input.MAILTRAP_SENDER_EMAIL ?? '')
+    : emailProvider === 'mailtrap'
+      ? (input.MAILTRAP_SENDER_EMAIL ?? input.BREVO_SENDER_EMAIL ?? '')
+      : (input.BREVO_SENDER_EMAIL ?? input.MAILTRAP_SENDER_EMAIL ?? '')))
+  const senderName = ((emailProvider === 'mailtrap'
+    ? (input.MAILTRAP_SENDER_NAME ?? input.GMASS_SENDER_NAME ?? input.BREVO_SENDER_NAME ?? '')
+    : emailProvider === 'gmass'
+      ? (input.GMASS_SENDER_NAME ?? input.BREVO_SENDER_NAME ?? input.MAILTRAP_SENDER_NAME ?? '')
+      : (input.BREVO_SENDER_NAME ?? input.MAILTRAP_SENDER_NAME ?? input.GMASS_SENDER_NAME ?? '')) ?? '').trim()
   const smsProvider = (input.SMS_PROVIDER ?? DEFAULT_SMS_PROVIDER).trim().toLowerCase()
   const smsApiKey = (input.SMS_API_KEY ?? '').trim()
   const sendAfricaApiKey = (input.SENDAFRICA_API_KEY ?? '').trim()
@@ -53,9 +64,11 @@ export function getProviderConfig(input: NodeJS.ProcessEnv = process.env): Provi
 
   const twilioAccountSid = smsAccountSid || (smsApiKey.includes(':') ? smsApiKey.split(':', 1)[0] : '')
   const twilioAuthToken = smsAuthToken || (smsApiKey.includes(':') ? smsApiKey.slice(smsApiKey.indexOf(':') + 1) : smsApiKey)
+  const activeKey = emailProvider === 'gmass' ? gmassApiKey : emailProvider === 'mailtrap' ? mailtrapApiKey : brevoApiKey
 
   return {
     emailProvider,
+    mailtrapApiKey,
     brevoApiKey,
     gmassApiKey,
     senderEmail,
@@ -66,7 +79,7 @@ export function getProviderConfig(input: NodeJS.ProcessEnv = process.env): Provi
     smsAccountSid: twilioAccountSid,
     smsAuthToken: twilioAuthToken,
     smsSenderId,
-    emailConfigured: Boolean((emailProvider === 'gmass' ? gmassApiKey : brevoApiKey) && senderEmail),
+    emailConfigured: Boolean(activeKey && senderEmail),
     smsConfigured: Boolean(
       smsProvider &&
       smsProvider !== DEFAULT_SMS_PROVIDER &&
@@ -82,7 +95,7 @@ export function getProviderConfig(input: NodeJS.ProcessEnv = process.env): Provi
 
 export function getProviderStatus(input: NodeJS.ProcessEnv = process.env): ProviderStatusSummary {
   const config = getProviderConfig(input)
-  const providerLabel = config.emailProvider === 'gmass' ? 'GMass' : 'Brevo'
+  const providerLabel = config.emailProvider === 'gmass' ? 'GMass' : config.emailProvider === 'mailtrap' ? 'Mailtrap' : 'Brevo'
 
   const email = config.emailConfigured
     ? {
