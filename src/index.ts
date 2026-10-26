@@ -834,24 +834,18 @@ app.post('/campaigns', { preValidation: [app.authenticate] }, async (request, re
   })
 
   if (!channelConfigured) {
-<<<<<<< HEAD
-    const emailProviderLabel = providerStatus.email.provider === 'gmass' ? 'GMass' : 'Brevo'
-=======
-    const configuredLabel = ((process.env.EMAIL_PROVIDER ?? 'mailtrap') as string).trim().toLowerCase() === 'gmass'
+    const configuredLabel = providerStatus.email.provider === 'gmass'
       ? 'GMass'
-      : 'Mailtrap'
+      : providerStatus.email.provider === 'mailtrap'
+        ? 'Mailtrap'
+        : 'Brevo'
 
->>>>>>> 8b79178 (Fix Mailtrap provider detection and campaign validation)
     return reply.code(400).send({
       ok: false,
       campaign,
       message: body.channel === 'sms'
         ? 'SMS is not configured for this tenant. Configure an approved SMS provider before sending campaigns.'
-<<<<<<< HEAD
-        : `${emailProviderLabel} email is not configured for this tenant. Add a validated API key and sender before sending campaigns.`,
-=======
         : `${configuredLabel} email is not configured for this tenant. Add a validated API key and sender before sending campaigns.`,
->>>>>>> 8b79178 (Fix Mailtrap provider detection and campaign validation)
     })
   }
 

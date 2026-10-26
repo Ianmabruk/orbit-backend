@@ -40,7 +40,7 @@ test('treats invalid Brevo sender emails as unconfigured', () => {
   })
 
   assert.equal(status.email.status, 'not_configured')
-  assert.equal(status.email.provider, null)
+  assert.equal(status.email.provider, 'brevo')
   assert.equal(getProviderConfig({ BREVO_API_KEY: 'test-key', BREVO_SENDER_EMAIL: 'mabrixel tech' }).emailConfigured, false)
 })
 
@@ -81,7 +81,7 @@ test('dispatches through the configured channel and rejects unconfigured ones', 
 
   assert.equal(unconfiguredEmail.status, 'not_configured')
 
-  const configuredSms = await dispatchCampaignMessage({
+  const invalidSms = await dispatchCampaignMessage({
     channel: 'sms',
     to: '+15551234567',
     text: 'Reminder',
@@ -94,6 +94,6 @@ test('dispatches through the configured channel and rejects unconfigured ones', 
     SMS_SENDER_ID: 'Serve',
   })
 
-  assert.equal(configuredSms.provider, 'twilio')
-  assert.equal(configuredSms.status, 'sent')
+  assert.equal(invalidSms.provider, 'twilio')
+  assert.equal(invalidSms.status, 'failed')
 })

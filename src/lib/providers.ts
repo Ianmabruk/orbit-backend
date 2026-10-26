@@ -50,11 +50,11 @@ export function getProviderConfig(input: NodeJS.ProcessEnv = process.env): Provi
     : emailProvider === 'mailtrap'
       ? (input.MAILTRAP_SENDER_EMAIL ?? input.BREVO_SENDER_EMAIL ?? '')
       : (input.BREVO_SENDER_EMAIL ?? input.MAILTRAP_SENDER_EMAIL ?? '')))
-  const senderName = ((emailProvider === 'mailtrap'
+  const senderName = (emailProvider === 'mailtrap'
     ? (input.MAILTRAP_SENDER_NAME ?? input.GMASS_SENDER_NAME ?? input.BREVO_SENDER_NAME ?? '')
     : emailProvider === 'gmass'
       ? (input.GMASS_SENDER_NAME ?? input.BREVO_SENDER_NAME ?? input.MAILTRAP_SENDER_NAME ?? '')
-      : (input.BREVO_SENDER_NAME ?? input.MAILTRAP_SENDER_NAME ?? input.GMASS_SENDER_NAME ?? '')) ?? '').trim()
+      : (input.BREVO_SENDER_NAME ?? input.MAILTRAP_SENDER_NAME ?? input.GMASS_SENDER_NAME ?? '')).trim()
   const smsProvider = (input.SMS_PROVIDER ?? DEFAULT_SMS_PROVIDER).trim().toLowerCase()
   const smsApiKey = (input.SMS_API_KEY ?? '').trim()
   const sendAfricaApiKey = (input.SENDAFRICA_API_KEY ?? '').trim()
@@ -189,6 +189,58 @@ export type CampaignDispatchResult = {
   status: 'sent' | 'not_configured' | 'failed'
   messageId?: string | null
   reason?: string
+}
+
+export async function sendMailtrapEmail(payload: {
+  to: Array<{ email: string; name?: string }>
+  subject: string
+  htmlContent?: string
+  textContent?: string
+  sender?: { email: string; name?: string }
+}, input: NodeJS.ProcessEnv = process.env) {
+  const config = getProviderConfig(input)
+
+  if (!config.emailConfigured) {
+    throw new Error('Mailtrap is not configured. Add the API key and sender address before sending email.')
+  }
+
+  const senderEmail = normalizeEmail(payload.sender?.email ?? config.senderEmail)
+  if (!senderEmail) {
+    throw new Error('The configured Mailtrap sender email is invalid. Add a verified sender email before sending email.')
+  }
+
+  const sender = payload.sender ?? { email: config.senderEmail, name: config.senderName }
+  const response = await fetch('https://send.api.mailtrap.io/api/send', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.mailtrapApiKey}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({
+      from: { email: sender.email, name: sender.name || 'Serve Platform' },
+      to: payload.to.map(({ email, name }) => ({ email, name: name || email })),
+      subject: payload.subject,
+      html: payload.htmlContent ?? payload.textContent ?? '',
+      text: payload.textContent ?? payload.htmlContent ?? '',
+      category: 'serve-campaign',
+    }),
+    signal: AbortSignal.timeout(15_000),
+  })
+
+  const parsed = await response.json().catch(() => ({}))
+  const body = parsed as { message?: string; errors?: Array<{ message?: string }>; id?: string }
+
+  if (!response.ok) {
+    throw new Error(body.message ?? body.errors?.[0]?.message ?? 'Mailtrap rejected the outbound email request.')
+  }
+
+  return {
+    ok: true,
+    provider: 'mailtrap',
+    messageId: body.id ?? null,
+    response: body,
+  }
 }
 
 export async function sendBrevoEmail(payload: {
@@ -446,7 +498,7 @@ export async function dispatchCampaignMessage(
 
   if (payload.channel === 'email') {
     if (!config.emailConfigured) {
-      const providerLabel = config.emailProvider === 'gmass' ? 'GMass' : 'Brevo'
+      const providerLabel = config.emailProvider === 'gmass' ? 'GMass' : config.emailProvider === 'mailtrap' ? 'Mailtrap' : 'Brevo'
       return {
         ok: false,
         channel: 'email',
@@ -456,13 +508,21 @@ export async function dispatchCampaignMessage(
       }
     }
 
-    const result = await sendBrevoEmail({
-      to: [{ email: payload.to, name: payload.sender?.name ?? 'Customer' }],
-      subject: payload.subject ?? 'Message from Serve',
-      textContent: payload.text,
-      htmlContent: `<p>${payload.text}</p>`,
-      sender: payload.sender ?? { email: config.senderEmail, name: config.senderName },
-    }, input)
+    const result = config.emailProvider === 'mailtrap'
+      ? await sendMailtrapEmail({
+          to: [{ email: payload.to, name: payload.sender?.name ?? 'Customer' }],
+          subject: payload.subject ?? 'Message from Serve',
+          textContent: payload.text,
+          htmlContent: `<p>${payload.text}</p>`,
+          sender: payload.sender ?? { email: config.senderEmail, name: config.senderName },
+        }, input)
+      : await sendBrevoEmail({
+          to: [{ email: payload.to, name: payload.sender?.name ?? 'Customer' }],
+          subject: payload.subject ?? 'Message from Serve',
+          textContent: payload.text,
+          htmlContent: `<p>${payload.text}</p>`,
+          sender: payload.sender ?? { email: config.senderEmail, name: config.senderName },
+        }, input)
 
     return {
       ok: true,
