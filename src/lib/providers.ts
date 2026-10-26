@@ -14,7 +14,7 @@ export type ProviderConfig = {
 export type ProviderStatusSummary = {
   email: {
     status: 'configured' | 'not_configured' | 'unauthorized'
-    provider: 'brevo' | null
+    provider: 'brevo' | 'gmass' | null
     sender: string | null
     message?: string
   }
@@ -104,6 +104,7 @@ export async function checkBrevoHealth(input: NodeJS.ProcessEnv = process.env) {
     return {
       ok: false,
       status: 'not_configured',
+      provider: config.emailProvider,
       message: 'Brevo is not configured.',
     }
   }
