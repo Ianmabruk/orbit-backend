@@ -16,6 +16,7 @@ export type CampaignDispatchPayload = {
   campaignId: string
   campaignName: string
   audience: number
+  recipientIds?: string[]
   channel: 'sms' | 'email'
   template: string
   scheduledFor?: string | null

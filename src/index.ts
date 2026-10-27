@@ -6,7 +6,7 @@ import jwt from '@fastify/jwt'
 import { z } from 'zod'
 import { prisma } from './lib/prisma.js'
 import { enqueueCampaignJob } from './lib/queue.js'
-import { checkBrevoHealth, getProviderStatus, sendBrevoEmail } from './lib/providers.js'
+import { getProviderStatus, dispatchCampaignMessage } from './lib/providers.js'
 import { mergeContactRows, normalizeContactRow } from './lib/contact-sync.js'
 import { hashPassword, verifyPassword } from './lib/security.js'
 
@@ -26,9 +26,9 @@ const envSchema = z.object({
   JWT_SECRET: z.string().default('serve-dev-secret'),
   DATABASE_URL: z.string().optional(),
   EMAIL_PROVIDER: z.string().optional(),
-  BREVO_API_KEY: z.string().optional(),
-  BREVO_SENDER_EMAIL: z.string().optional(),
-  BREVO_SENDER_NAME: z.string().optional(),
+  MAILTRAP_API_KEY: z.string().optional(),
+  MAILTRAP_SENDER_EMAIL: z.string().optional(),
+  MAILTRAP_SENDER_NAME: z.string().optional(),
   GMASS_API_KEY: z.string().optional(),
   GMASS_API_URL: z.string().optional(),
   GMASS_SENDER_EMAIL: z.string().optional(),
@@ -163,9 +163,15 @@ app.get('/providers/status', async () => ({
   timestamp: new Date().toISOString(),
 }))
 
-app.get('/providers/brevo/health', async () => {
-  const health = await checkBrevoHealth(process.env)
-  return health
+app.get('/providers/mailersend/health', async () => {
+  const status = getProviderStatus(process.env)
+  return {
+    ok: status.email.status === 'configured',
+    status: status.email.status,
+    provider: 'mailersend',
+    sender: status.email.sender,
+    message: status.email.message ?? 'MailerSend is ready to send campaigns.',
+  }
 })
 
 app.get('/integrations', { preValidation: [app.authenticate] }, async (request, reply) => {
@@ -470,23 +476,23 @@ app.post('/providers/test-email', { preValidation: [app.authenticate] }, async (
   }
 
   try {
-    const payload = await sendBrevoEmail({
-      to: [{ email: body.email ?? user.email, name: user.fullName }],
+    const result = await dispatchCampaignMessage({
+      channel: 'email',
+      to: body.email ?? user.email,
       subject: body.subject,
-      htmlContent: body.htmlContent,
-      textContent: body.htmlContent.replace(/<[^>]+>/g, ' '),
+      text: body.htmlContent.replace(/<[^>]+>/g, ' '),
     }, process.env)
 
     return {
-      ok: true,
-      provider: 'brevo',
-      message: 'Brevo test email accepted by the provider.',
-      result: payload,
+      ok: result.ok,
+      provider: result.provider ?? 'mailersend',
+      message: result.ok ? 'Test email accepted by the provider.' : result.reason ?? 'Unable to send a test email.',
+      result,
     }
   } catch (error) {
     return reply.code(400).send({
       ok: false,
-      provider: 'brevo',
+      provider: 'mailersend',
       message: error instanceof Error ? error.message : 'Unable to send a test email.',
     })
   }
@@ -831,7 +837,7 @@ app.post('/campaigns', { preValidation: [app.authenticate] }, async (request, re
   })
 
   if (!channelConfigured) {
-    const emailProviderLabel = providerStatus.email.provider === 'gmass' ? 'GMass' : 'Brevo'
+    const emailProviderLabel = 'MailerSend'
     return reply.code(400).send({
       ok: false,
       campaign,
@@ -853,6 +859,7 @@ app.post('/campaigns', { preValidation: [app.authenticate] }, async (request, re
     campaignId: campaign.id,
     campaignName: campaign.name,
     audience: recipientIds.length,
+    recipientIds,
     channel: campaign.channel as 'sms' | 'email',
     template: campaign.template,
     scheduledFor: campaign.scheduledFor ? campaign.scheduledFor.toISOString() : null,

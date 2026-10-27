@@ -1,79 +1,81 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { getProviderStatus, getProviderConfig, type ProviderStatusSummary, dispatchCampaignMessage } from './providers.js'
+import { getProviderStatus, getProviderConfig, dispatchCampaignMessage } from './providers.js'
 
-test('returns a truthful status when email is configured and SMS is not', () => {
+test('returns configured when MailerSend token and sender are present', () => {
   const config = {
-    BREVO_API_KEY: 'test-key',
-    BREVO_SENDER_EMAIL: 'hello@example.com',
-    BREVO_SENDER_NAME: 'Example Business',
-    SMS_PROVIDER: '',
-    SMS_API_KEY: '',
-    SMS_SENDER_ID: '',
+    MAILERSEND_API_TOKEN: 'test-token',
+    MAILERSEND_FROM_EMAIL: 'hello@example.com',
+    MAILERSEND_FROM_NAME: 'Example Business',
   }
 
   const status = getProviderStatus(config)
-  const summary: ProviderStatusSummary = {
-    email: { status: 'configured', provider: 'brevo', sender: 'hello@example.com' },
-    sms: {
-      status: 'not_configured',
-      provider: null,
-      sender: null,
-      message: 'No valid SMS provider is configured. Messaging is disabled until an approved provider is connected.',
-    },
-    isFullyConfigured: false,
-  }
-
-  assert.deepEqual(status, summary)
+  assert.equal(status.email.status, 'configured')
+  assert.equal(status.email.provider, 'mailersend')
+  assert.equal(status.email.sender, 'hello@example.com')
+  assert.equal(status.isFullyConfigured, true)
   assert.equal(getProviderConfig(config).emailConfigured, true)
 })
 
-test('treats invalid Brevo sender emails as unconfigured', () => {
+test('SMS is not configured because MailerSend does not support SMS', () => {
   const status = getProviderStatus({
-    BREVO_API_KEY: 'test-key',
-    BREVO_SENDER_EMAIL: 'mabrixel tech',
-    BREVO_SENDER_NAME: 'Serve Platform',
-    SMS_PROVIDER: '',
-    SMS_API_KEY: '',
-    SMS_SENDER_ID: '',
+    MAILERSEND_API_TOKEN: 'test-token',
+    MAILERSEND_FROM_EMAIL: 'hello@example.com',
+    MAILERSEND_FROM_NAME: 'Example Business',
   })
-
-  assert.equal(status.email.status, 'not_configured')
-  assert.equal(status.email.provider, null)
-  assert.equal(getProviderConfig({ BREVO_API_KEY: 'test-key', BREVO_SENDER_EMAIL: 'mabrixel tech' }).emailConfigured, false)
+  assert.equal(status.sms.status, 'not_configured')
 })
 
-test('dispatches through the configured channel and rejects unconfigured ones', async () => {
-  const unconfiguredEmail = await dispatchCampaignMessage({
+test('dispatches email through MailerSend and rejects SMS', async () => {
+  const unconfigured = await dispatchCampaignMessage({
     channel: 'email',
     to: 'hello@example.com',
     subject: 'Welcome',
     text: 'Hello there',
   }, {
-    BREVO_API_KEY: '',
-    BREVO_SENDER_EMAIL: '',
-    BREVO_SENDER_NAME: '',
-    SMS_PROVIDER: '',
-    SMS_API_KEY: '',
-    SMS_SENDER_ID: '',
+    MAILERSEND_API_TOKEN: '',
+    MAILERSEND_FROM_EMAIL: '',
+    MAILERSEND_FROM_NAME: '',
   })
 
-  assert.equal(unconfiguredEmail.status, 'not_configured')
+  assert.equal(unconfigured.status, 'not_configured')
 
-  const configuredSms = await dispatchCampaignMessage({
+  const smsResult = await dispatchCampaignMessage({
     channel: 'sms',
-    to: '+15551234567',
+    to: '+254712345678',
     text: 'Reminder',
   }, {
-    BREVO_API_KEY: '',
-    BREVO_SENDER_EMAIL: '',
-    BREVO_SENDER_NAME: '',
-    SMS_PROVIDER: 'twilio',
-    SMS_API_KEY: 'secret',
-    SMS_SENDER_ID: 'Serve',
+    MAILERSEND_API_TOKEN: 'test-token',
+    MAILERSEND_FROM_EMAIL: 'hello@example.com',
+    MAILERSEND_FROM_NAME: 'Example Business',
   })
 
-  assert.equal(configuredSms.provider, 'twilio')
-  assert.equal(configuredSms.status, 'sent')
+  assert.equal(smsResult.status, 'not_configured')
+
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () =>
+    new Response(null, {
+      status: 202,
+      headers: { 'x-message-id': 'MS-123456' },
+    })
+
+  try {
+    const configuredEmail = await dispatchCampaignMessage({
+      channel: 'email',
+      to: 'hello@example.com',
+      subject: 'Welcome',
+      text: 'Reminder',
+    }, {
+      MAILERSEND_API_TOKEN: 'test-token',
+      MAILERSEND_FROM_EMAIL: 'hello@example.com',
+      MAILERSEND_FROM_NAME: 'Example Business',
+    })
+
+    assert.equal(configuredEmail.provider, 'mailersend')
+    assert.equal(configuredEmail.status, 'sent')
+    assert.equal(configuredEmail.messageId, 'MS-123456')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 })
